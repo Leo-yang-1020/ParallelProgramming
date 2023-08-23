@@ -10,6 +10,7 @@
 #include <thrust/device_free.h>
 
 #include "CycleTimer.h"
+#define THREADPERBLOCK 2
 
 extern float toBW(int bytes, float sec);
 
@@ -27,18 +28,62 @@ static inline int nextPow2(int n)
     n++;
     return n;
 }
-
-void exclusive_scan(int* device_start, int length, int* device_result)
+__global__ void 
+upsweep(int twod, int *device_result)
 {
-    /* Fill in this function with your exclusive scan implementation.
-     * You are passed the locations of the input and output in device memory,
-     * but this is host code -- you will need to declare one or more CUDA 
+    int twod1 = twod*2;
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    if (index % twod1 == 0)
+        device_result[index + twod1 -1] += device_result[index + twod -1];
+}
+
+__global__ void 
+downsweep(int twod, int *device_result)
+{
+    int temp;
+    int twod1 = twod*2;
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    if (index % twod1 == 0) {
+        temp = device_result[index + twod -1];
+        device_result[index + twod -1] = device_result[index + twod1 -1];
+        device_result[index + twod1 -1] += temp;
+    }
+}
+ 
+void exclusive_scan(int length, int *device_result) {
+    /* TODO
+     * Fill in this function with your exclusive scan implementation.
+     * You are passed the locations of the data in device memory
+     * The data are initialized to the inputs.  Your code should
+     * do an in-place scan, generating the results in the same array.
+     * This is host code -- you will need to declare one or more CUDA
      * kernels (with the __global__ decorator) in order to actually run code
      * in parallel on the GPU.
      * Note you are given the real length of the array, but may assume that
-     * both the input and the output arrays are sized to accommodate the next
+     * both the data array is sized to accommodate the next
      * power of 2 larger than the input.
      */
+
+    // length is the actual array size, valid_size is the value from 
+    // nextPow2(length)
+    int threadsPerBlock = 2;
+    int valid_size = nextPow2(length);
+    int num_blocks = (valid_size + threadsPerBlock -1) / threadsPerBlock;
+
+    int step = 0;
+
+    // stage1
+    for (step = 1; step < valid_size/threadsPerBlock ; step*=2) {
+        upsweep<<<num_blocks, threadsPerBlock>>>(step, device_result);
+    }
+
+    // stage2
+    cudaMemset(device_result + valid_size - 1, 0, sizeof(int));
+    for (step = valid_size/2; step > 0; step/=2) {
+        downsweep<<<num_blocks, threadsPerBlock>>>(step, device_result);
+    }
+    
+    return ;
 }
 
 /* This function is a wrapper around the code you will write - it copies the
@@ -71,7 +116,7 @@ double cudaScan(int* inarray, int* end, int* resultarray)
 
     double startTime = CycleTimer::currentSeconds();
 
-    exclusive_scan(device_input, end - inarray, device_result);
+    exclusive_scan(end - inarray, device_result);
 
     // Wait for any work left over to be completed.
     cudaThreadSynchronize();
@@ -113,6 +158,25 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration;
 }
 
+__global__ void
+find_repeats_pos(int *device_input, int length, int *device_repeats_pos) {
+    int index = blockDim.x * blockIdx.x + threadIdx.x;
+    if (index < length && device_input[index] == device_input[index+1])
+        device_repeats_pos[index] = 1;
+    else 
+        device_repeats_pos[index] = 0;
+}
+
+__global__ void
+write_pos_back(int *device_repeats_pos, int length, int *device_output) {
+    int index = blockDim.x * blockIdx.x + threadIdx.x;
+    int resultIdx = device_repeats_pos[index];
+
+    if (index < length && device_repeats_pos[index] != device_repeats_pos[index + 1]) {
+        device_output[resultIdx] = index;
+    }
+}
+
 int find_repeats(int *device_input, int length, int *device_output) {
     /* Finds all pairs of adjacent repeated elements in the list, storing the
      * indices of the first element of each pair (in order) into device_result.
@@ -124,8 +188,22 @@ int find_repeats(int *device_input, int length, int *device_output) {
      * of 2 in size, so you can use your exclusive_scan function with them if 
      * it requires that. However, you must ensure that the results of
      * find_repeats are correct given the original length.
-     */    
-    return 0;
+     */
+    int threadsPerBlock = 2;
+    int result = 0;
+    int validSize;
+    int block_num = (length + threadsPerBlock -1) / threadsPerBlock;
+    int *device_repeats_pos;
+
+    validSize = nextPow2(length);
+
+    cudaMalloc(&device_repeats_pos, sizeof(int) * validSize);
+
+    find_repeats_pos<<<block_num, threadsPerBlock>>> (device_input, length, device_repeats_pos);
+    exclusive_scan(length, device_repeats_pos);
+    write_pos_back<<<block_num, threadsPerBlock>>> (device_repeats_pos, length, device_output);
+    cudaMemcpy(&result, &device_repeats_pos[length - 1], sizeof(int), cudaMemcpyDeviceToHost); /* tail of pos arr indicates total number result */
+    return result;
 }
 
 /* Timing wrapper around find_repeats. You should not modify this function.
