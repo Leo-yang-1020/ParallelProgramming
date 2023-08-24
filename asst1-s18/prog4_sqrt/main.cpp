@@ -35,7 +35,7 @@ static void verifyResult(int N, float* result, float* gold) {
 
 int main(int argc, char *argv[]) {
 
-    const int N = 20 * 1000 * 1000;
+    const int N = 20 * 1000 * 1000 * 16;
     const float initialGuess = 1.0f;
 
     float* values = new float[N];

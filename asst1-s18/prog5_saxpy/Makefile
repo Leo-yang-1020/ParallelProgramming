@@ -1,5 +1,5 @@
 CXX=g++ -m64
-CXXFLAGS=-I../common -Iobjs/ -O3 -Wall -msse4.1 -DNDEBUG
+CXXFLAGS=-I../common -Iobjs/ -O3 -Wall -msse4.1 -DNDEBUG -mfma
 ISPC=ispc
 # note: change target to avx-x2 for AVX capable machines
 ISPCFLAGS=-O3 --target=avx2-i32x8 --arch=x86-64
