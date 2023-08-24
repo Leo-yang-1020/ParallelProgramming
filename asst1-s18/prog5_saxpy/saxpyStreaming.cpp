@@ -3,7 +3,7 @@
 #include <immintrin.h>
 #include <assert.h>
 #include <stdint.h>
-const int VECTOR_SIZE = 8;
+const int VECTOR_SIZE = 4;
 
 extern void saxpySerial(int N,
 			float scale,
@@ -18,14 +18,16 @@ void saxpyStreaming(int N,
                     float Y[],
                     float result[])
 {
-    __m256 scaleVec = _mm256_set1_ps(scale);
-
+    // Replace this code with ones that make use of the streaming instructions
+    // saxpySerial(N, scale, X, Y, result);
+    __m128 vec_x, vec_y;
+    // scale, scale, scale, scale
+    __m128 scalar = _mm_set1_ps(scale);
     for (int i = 0; i < N; i += VECTOR_SIZE) {
-        __m256 xVec = _mm256_load_ps(&X[i]);
-        __m256 yVec = _mm256_load_ps(&Y[i]);
-
-        __m256 resultVec = _mm256_fmadd_ps(scaleVec, xVec, yVec);
-
-        _mm256_stream_ps(&result[i], resultVec);
+        vec_x = _mm_loadu_ps(X + i);  /* load x */
+        vec_y = _mm_loadu_ps(Y + i);  /* load y */
+        vec_x = _mm_mul_ps(vec_x, scalar); /* multiple scalar */
+        vec_x = _mm_add_ps(vec_x, vec_y); /* vector add */
+        _mm_stream_ps(result + i, vec_x); /* streaming store without cache coherence */
     }
 }
